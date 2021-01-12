@@ -13,6 +13,19 @@ def preprocess(df):
     
     return df
 
+def add_group_feature(x_train, x_valid, x_test, x_sub, y_train):
+    others = [x_valid, x_test, x_sub]
+    x_train, others = fe.goal_min_group(x_train, others)
+    x_train, others = fe.goal_max_group(x_train, others)
+    x_train, others = fe.duration_group(x_train, others)
+
+    x_train, others = fe.target_encoding(x_train, y_train, others, 'country_encoding')
+    x_train, others = fe.target_encoding(x_train, y_train, others, 'category1_encoding')
+    x_train, others = fe.target_encoding(x_train, y_train, others, 'category2_encoding')
+
+    x_train, others = fe.multi_target_encoding(x_train, y_train, others, ['country_encoding', 'category1_encoding', 'category2_encoding'])
+    
+    return x_train, others[0], others[1], others[2]
 
 if __name__ == '__main__':
     train_df, test_df = fe.read_df()
@@ -33,18 +46,22 @@ if __name__ == '__main__':
     scores = list()
     params = None
     tune = True
-    name = 'baseline'
+    name = 'target_encoding'
     for cv_idx in range(cv):
         'prepare'
         x_train, y_train = train_dfs[cv_idx][features], train_dfs[cv_idx][target]
         x_valid, y_valid = valid_dfs[cv_idx][features], valid_dfs[cv_idx][target]
         x_test, y_test = test_dfs[cv_idx][features], test_dfs[cv_idx][target]
-        # lgb_train, lgb_valid = lgb.Dataset(x_train, y_train), lgb.Dataset(x_valid, y_valid, free_raw_data=False)
+        
+        # add feature from baseline
+        x_train, x_valid, x_test, x_sub = add_group_feature(x_train, x_valid, x_test, test_df[features], y_train)
+
+
         lgb_train, lgb_valid = lgb.Dataset(x_train, y_train, categorical_feature=[3, 4, 5], free_raw_data=False), lgb.Dataset(x_valid, y_valid, categorical_feature=[3, 4, 5], free_raw_data=False)
 
         'train'
         if tune:
-            params = training.tuning(lgb_train, lgb_valid, 500)
+            params = training.tuning(lgb_train, lgb_valid, 100)
             pd.to_pickle(params, 'params/{0}_cv{1}.pkl'.format(name, cv_idx))
         model = training.train(lgb_train, lgb_valid, params)
         score = training.evaluation(model, x_test, y_test)
@@ -52,7 +69,7 @@ if __name__ == '__main__':
         model.save_model('model/{0}_cv{1}.txt'.format(name, cv_idx), num_iteration=model.best_iteration)
 
         'predict'
-        pred = model.predict(test_df[features])
+        pred = model.predict(x_sub)
         pred = np.round(pred)
         sub_df.iloc[:, 1] += pred
     sub_df.iloc[:, 1] /= cv
@@ -61,6 +78,6 @@ if __name__ == '__main__':
 
     print(scores)
     print(np.mean(scores))
-    # 0.7277829034186655
+    # 
 
     sub_df.to_csv('result/{0}.csv'.format(name), index=None, header=None)
