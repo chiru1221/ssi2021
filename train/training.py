@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import lightgbm as lgb
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 from sklearn.metrics import f1_score
 import optuna
 from optuna.samplers import TPESampler
@@ -44,7 +44,7 @@ def train(lgb_train, lgb_valid, params=None):
         feval=lgb_f1_score,
         verbose_eval=100,
         num_boost_round=10000,
-        early_stopping_rounds=500
+        early_stopping_rounds=1000
     )
     return model
 
@@ -82,10 +82,10 @@ def tuning(lgb_train, lgb_valid, n_trials=100):
     def create_model(trial):
         num_leaves = trial.suggest_int('num_leaves', 7, 256)
         # 500 or 1000, -> (450, 550) or (950, 1050)
-        n_estimators = trial.suggest_int('n_estimators', 950, 1050)
+        n_estimators = trial.suggest_int('n_estimators', 450, 550)
         max_depth = trial.suggest_int('max_depth', 3, 8)
         # 0.0001, 0.1
-        learning_rate = trial.suggest_uniform('learning_rate', 0.0001, 0.1)
+        learning_rate = trial.suggest_uniform('learning_rate', 0.001, 0.1)
         min_data_in_leaf = trial.suggest_int('min_data_in_leaf', 50, 90)
         bagging_fraction = trial.suggest_uniform('bagging_fraction', 0.1, 1.0)
         feature_fraction = trial.suggest_uniform('feature_fraction', 0.1, 1.0)
@@ -179,13 +179,15 @@ def cv(train_df, n_splits, val_size=0.1, seed=0):
     all_df = train_df.copy()
 
     train_dfs, valid_dfs, test_dfs = list(), list(), list()
-    for train_idx, test_idx in kf.split(np.zeros(len(all_df)), all_df.state.values):
-        np.random.seed(seed)
-        valid_idx = np.random.choice(train_idx, size=int(len(train_idx)*val_size), replace=False)
-        train_idx = np.setdiff1d(train_idx, valid_idx)
-        train_df, valid_df, test_df = all_df.iloc[train_idx, :], all_df.iloc[valid_idx, :], all_df.iloc[test_idx, :]
-        train_dfs.append(train_df)
-        valid_dfs.append(valid_df)
-        test_dfs.append(test_df)
+    for train_valid_idx, test_idx in kf.split(np.zeros(len(all_df)), all_df.state.values):
+        # np.random.seed(seed)
+        # valid_idx = np.random.choice(train_idx, size=int(len(train_idx)*val_size), replace=False)
+        sss = StratifiedShuffleSplit(n_splits=1, test_size=0.1, random_state=seed)
+        for train_idx, valid_idx in sss.split(np.zeros(len(train_valid_idx)), all_df.state.values[train_valid_idx]):
+            # train_idx = np.setdiff1d(train_idx, valid_idx)
+            train_df, valid_df, test_df = all_df.iloc[train_idx, :], all_df.iloc[valid_idx, :], all_df.iloc[test_idx, :]
+            train_dfs.append(train_df)
+            valid_dfs.append(valid_df)
+            test_dfs.append(test_df)
     
     return train_dfs, valid_dfs, test_dfs

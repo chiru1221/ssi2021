@@ -2,7 +2,11 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from bs4 import BeautifulSoup
+from sklearn.feature_extraction import text
 from sklearn.feature_extraction.text import CountVectorizer
+import torch
+import transformers
+from transformers import BertTokenizer, BertModel
 import itertools
 
 def read_df():
@@ -103,13 +107,13 @@ def duration_group(df, others):
             others[i] = pd.merge(other, group, left_on=col, how='left', right_index=True)
     return df, others
 
-def text_to_word_count(df, others, thre=0.25, del_html_content=True):
+def text_to_word_count(df, others, thre=0.1, del_html_content=True):
     to_text = lambda x: BeautifulSoup(x, 'lxml').text
-    df['html_content_text'] = df.html_content.apply(to_text).copy()
+    df['html_content_text'] = df.html_content.apply(to_text).str.lower()
     for i, other in enumerate(others):
-        others[i]['html_content_text'] = other.html_content.apply(to_text).copy()
+        others[i]['html_content_text'] = other.html_content.apply(to_text).str.lower()
     
-    vectorizer = CountVectorizer()
+    vectorizer = CountVectorizer(stop_words='english')
     corpus = df.html_content_text
     vectorizer.fit(corpus)
     
@@ -237,3 +241,30 @@ def multi_target_encoding(df, label, others, columns):
         for i, other in enumerate(others):
             others[i] = pd.merge(other, group, left_on=col, how='left', right_index=True)
     return df, others
+
+def bert_feature(df):
+    to_text = lambda x: BeautifulSoup(x, 'lxml').text
+    df['html_content_text'] = df.html_content.apply(to_text).str.lower()
+    df.html_content_text = df.html_content_text.str.split(' ')
+    stop_words = text.ENGLISH_STOP_WORDS
+    def remove_stop_words(words):
+        return [word for word in words if word not in stop_words]
+    df.html_content_text = df.html_content_text.apply(remove_stop_words)
+
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    encoding = lambda x: tokenizer.encode_plus(x, max_length=100, truncation=True, padding='max_length')
+    data = df.html_content_text.apply(encoding)
+
+    ids = data.apply(lambda x: x['input_ids']).values.tolist()
+    mask = data.apply(lambda x: x['attention_mask']).values.tolist()
+
+    ids, mask = np.array(ids), np.array(mask)
+    
+    ids, mask = torch.from_numpy(ids), torch.from_numpy(mask)
+
+    bert = BertModel.from_pretrained('bert-base-uncased')
+    bert.eval()
+    with torch.no_grad():
+        output = bert(ids.long(), attention_mask=mask.long())
+    feature_df = pd.DataFrame(output[-1].detach().cpu().numpy()).add_prefix('bert_feature_')
+    return feature_df

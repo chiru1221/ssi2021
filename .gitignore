@@ -3,3 +3,4 @@ data/
 model/
 result/
 params/
+__pycache__/
